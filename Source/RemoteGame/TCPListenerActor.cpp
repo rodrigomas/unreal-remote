@@ -15,7 +15,7 @@ ATCPListenerActor::ATCPListenerActor()
 bool ATCPListenerActor::Connect()
 {
 	uint8 IP4Nums[4];
-	if (!FormatIP4ToNumber(ServerIP, IP4Nums))
+	if (!TextToIPArray(ServerIP, IP4Nums))
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("TCP Client>> Invalid IP! Expecting 4 parts separated by .")));
 		return false;
@@ -26,24 +26,94 @@ bool ATCPListenerActor::Connect()
 	ClientSocket = FTcpSocketBuilder(TEXT("TCPClient"))
 		.AsReusable()
 		.BoundToEndpoint(Endpoint)
-		.Listening(8);
+		.Listening(8);	
 
 	//Set Buffer Size
 	int32 NewSize = 0;
 	ClientSocket->SetReceiveBufferSize(ReceiveBufferSize, NewSize);
 
-	if (!ClientSocket)
+	ListenerSocket = new FTcpListener(*ClientSocket);
+
+	if (!ListenerSocket)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("TCP Client>> Client socket could not be created!: %s %d"), *ServerIP, ServerPort));
 		return false;
 	}
 
-	GetWorldTimerManager().SetTimer(TCPTimerHandle, this, &ATCPListenerActor::TCPConnectionListener, 0.01, true);
+	ConnectionSocket = NULL;
+
+	ListenerSocket->OnConnectionAccepted().BindUObject(this, &ATCPListenerActor::ConnectionAccepted);
+
+	GetWorldTimerManager().ClearTimer(TCPTimerHandle);
+	//GetWorldTimerManager().SetTimer(TCPTimerHandle, this, &ATCPListenerActor::TCPConnectionListener, 0.01, true);
 
 	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("TCP Client>> Server Initialized")));
 	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Server Initialized"));
 
+	ListenerSocket->Init();
+
+	GetWorldTimerManager().ClearTimer(TCPClientTimerHandle);
+	GetWorldTimerManager().SetTimer(TCPClientTimerHandle, this, &ATCPListenerActor::ProcessData, 0.01, true);
+
 	return true;
+}
+
+bool ATCPListenerActor::ConnectionAccepted(FSocket* LocalClientSocket, const FIPv4Endpoint& ClientEndpoint)
+{
+	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> New Connection"));
+
+	try
+	{
+		if (ConnectionSocket)
+		{
+			FSocket * lsocket = ConnectionSocket;
+			ConnectionSocket = NULL;
+
+			lsocket->Close();
+			ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(lsocket);
+		}
+
+	} catch(...)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Error on socket destruction"));
+	}
+
+
+	ConnectionSocket = LocalClientSocket;
+
+	UE_LOG(LogTemp, Warning, TEXT("TCP Received Socket Connection"));
+
+	try
+	{
+		if (ConnectionSocket != NULL)
+		{
+			RemoteAddressForConnection = FIPv4Endpoint(ClientEndpoint.Address, ClientEndpoint.Port);
+			//GetWorldTimerManager().ClearTimer(TCPClientTimerHandle);
+			//GetWorldTimerManager().SetTimer(TCPClientTimerHandle, this, &ATCPListenerActor::ProcessData, 0.01, true);
+
+			OnConnect();
+		}
+	} catch(...)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Error on socket binding"));
+	}
+
+	return true;
+}
+
+void ATCPListenerActor::OnConnect_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Server Connected"));
+}
+
+void ATCPListenerActor::OnDisconnect_Implementation()
+{
+	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Server Disconnected"));
+}
+
+bool ATCPListenerActor::IsConnected() const
+{
+	return (ConnectionSocket != NULL && ListenerSocket != NULL && ListenerSocket->IsActive());
 }
 
 bool ATCPListenerActor::Disconnect()
@@ -53,16 +123,20 @@ bool ATCPListenerActor::Disconnect()
 		if (ConnectionSocket)
 		{
 			ConnectionSocket->Close();
-			ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ConnectionSocket);
+			//ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ConnectionSocket);
+			OnDisconnect();
 		}
 
 		if (ClientSocket)
 		{
+			
+			ListenerSocket->Stop();
 			ClientSocket->Close();
-			ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+			//ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
 		}
 
 		GetWorld()->GetTimerManager().ClearTimer(TCPTimerHandle);
+		GetWorld()->GetTimerManager().ClearTimer(TCPClientTimerHandle);
 	}
 	catch (...)
 	{
@@ -76,89 +150,88 @@ void ATCPListenerActor::TCPConnectionListener()
 {
 	if (!ClientSocket) return;
 
-	//Remote address
 	TSharedRef<FInternetAddr> RemoteAddress = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
 	bool Pending;
 
-	//UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Server Listening"));
-
-	// handle incoming connections
 	if (ClientSocket->HasPendingConnection(Pending) && Pending)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("TCP Client>> New Connection"));
-		//Already have a Connection? destroy previous
+
 		if (ConnectionSocket)
 		{
-			ConnectionSocket->Close();
-			ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ConnectionSocket);
+			FSocket * lsocket = ConnectionSocket;
+			ConnectionSocket = NULL;
+
+			lsocket->Close();
+			ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(lsocket);
 		}
 
-		//New Connection receive!
 		ConnectionSocket = ClientSocket->Accept(*RemoteAddress, TEXT("TCP Received Socket Connection"));
 
 		UE_LOG(LogTemp, Warning, TEXT("TCP Received Socket Connection"));
 
 		if (ConnectionSocket != NULL)
 		{
-			//Global cache of current Remote Address
 			RemoteAddressForConnection = FIPv4Endpoint(RemoteAddress);
+			//GetWorldTimerManager().ClearTimer(TCPClientTimerHandle);
+			//GetWorldTimerManager().SetTimer(TCPClientTimerHandle, this, &ATCPListenerActor::ProcessData, 0.01, true);
 
-			//can thread this too
-			GetWorldTimerManager().SetTimer(TCPTimerHandle, this, &ATCPListenerActor::ProcessData, 0.01, true);
+			OnConnect();
 		}
 	}
 }
 
 void ATCPListenerActor::ProcessData()
 {
-	if (!ConnectionSocket) return;
-
-	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> New Data From Client"));
-
-	//Binary Array!
-	TArray<uint8> ReceivedData;
-
-	uint32 Size;
-	while (ConnectionSocket->HasPendingData(Size))
+	try
 	{
-		ReceivedData.Init(0, FMath::Min(Size, 65507u));
+		if (!ConnectionSocket) return;
 
-		int32 Read = 0;
-		ConnectionSocket->Recv(ReceivedData.GetData(), ReceivedData.Num(), Read);
+		UE_LOG(LogTemp, Warning, TEXT("TCP Client>> New Data From Client"));
 
-		//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Data Read! %d"), ReceivedData.Num()));
+		TArray<uint8> ReceivedData;
+
+		
+
+		uint32 Size;
+		while (ConnectionSocket->HasPendingData(Size))
+		{
+			ReceivedData.Init(0, FMath::Min(Size, 65507u));
+
+			int32 Read = 0;
+			ConnectionSocket->Recv(ReceivedData.GetData(), ReceivedData.Num(), Read);
+
+			//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Data Read! %d"), ReceivedData.Num()));
+		}
+
+		if (ReceivedData.Num() <= 0)
+		{
+			return;
+		}
+
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Data Bytes Read: %d"), ReceivedData.Num()));
+
+		const FString ReceivedUE4String = StringFromBinaryArray(ReceivedData);
+
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("As String Data ~> %s"), *ReceivedUE4String));
+
+		UE_LOG(LogTemp, Warning, TEXT("As String Data ~> %s"), *ReceivedUE4String);
 	}
-
-	if (ReceivedData.Num() <= 0)
+	catch (...)
 	{
-		//No Data Received
-		return;
+
 	}
-
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Data Bytes Read: %d"), ReceivedData.Num()));
-
-	const FString ReceivedUE4String = StringFromBinaryArray(ReceivedData);
-
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("As String Data ~> %s"), *ReceivedUE4String));
-
-	UE_LOG(LogTemp, Warning, TEXT("As String Data ~> %s"), *ReceivedUE4String);
 }
 
-bool ATCPListenerActor::FormatIP4ToNumber(const FString& TheIP, uint8(&Out)[4])
+bool ATCPListenerActor::TextToIPArray(const FString& TheIP, uint8(&Out)[4])
 {
-	//IP Formatting
 	TheIP.Replace(TEXT(" "), TEXT(""));
 
-	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-	//						   IP 4 Parts
-
-	//String Parts
 	TArray<FString> Parts;
 	TheIP.ParseIntoArray(Parts, TEXT("."), true);
 	if (Parts.Num() != 4)
 		return false;
 
-	//String to Number Parts
 	for (int32 i = 0; i < 4; ++i)
 	{
 		Out[i] = FCString::Atoi(*Parts[i]);
@@ -169,11 +242,7 @@ bool ATCPListenerActor::FormatIP4ToNumber(const FString& TheIP, uint8(&Out)[4])
 
 FString ATCPListenerActor::StringFromBinaryArray(TArray<uint8> BinaryArray)
 {
-	BinaryArray.Add(0); // Add 0 termination. Even if the string is already 0-terminated, it doesn't change the results.
-						// Create a string from a byte array. The string is expected to be 0 terminated (i.e. a byte set to 0).
-						// Use UTF8_TO_TCHAR if needed.
-						// If you happen to know the data is UTF-16 (USC2) formatted, you do not need any conversion to begin with.
-						// Otherwise you might have to write your own conversion algorithm to convert between multilingual UTF-16 planes.
+	BinaryArray.Add(0);						
 	return FString(ANSI_TO_TCHAR(reinterpret_cast<const char*>(BinaryArray.GetData())));
 }
 
@@ -197,5 +266,23 @@ void ATCPListenerActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+}
+
+void ATCPListenerActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Super::EndPlay(EndPlayReason);
+	
+	try
+	{
+		if(IsConnected())
+		{
+			Disconnect();
+		}
+		//Connect();
+	}
+	catch (...)
+	{
+
+	}
 }
 

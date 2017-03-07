@@ -9,7 +9,7 @@
 #include "GameFramework/Actor.h"
 #include "TCPListenerActor.generated.h"
 
-UCLASS()
+UCLASS(Blueprintable)
 class REMOTEGAME_API ATCPListenerActor : public AActor
 {
 	GENERATED_BODY()
@@ -17,25 +17,39 @@ class REMOTEGAME_API ATCPListenerActor : public AActor
 public:	
 	
 	FTimerHandle TCPTimerHandle;
+	FTimerHandle TCPClientTimerHandle;
 
 	ATCPListenerActor();
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Server Settings")
 	FString ServerIP = TEXT("127.0.0.1");
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Server Settings")
 	int32 ServerPort = 10000;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "Server Settings")
 	int32 ReceiveBufferSize = 2048;
-
+	
+	UFUNCTION(BlueprintCallable, Category = "Connection")
 	bool Connect();
 
+	UFUNCTION(BlueprintCallable, Category = "Connection")
 	bool Disconnect();
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Connection")
+	void OnConnect();
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Connection")
+	void OnDisconnect();
+
+	UFUNCTION(BlueprintCallable, Category = "Connection")
+	bool IsConnected() const;
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 public:	
 	// Called every frame
@@ -43,6 +57,7 @@ public:
 
 private:
 	FSocket* ClientSocket;
+	FTcpListener* ListenerSocket;
 	FSocket* ConnectionSocket;		
 
 	FIPv4Endpoint RemoteAddressForConnection;
@@ -51,9 +66,11 @@ private:
 
 	void TCPConnectionListener();
 
+	bool ConnectionAccepted(FSocket* LocalClientSocket, const FIPv4Endpoint& ClientEndpoint);
+
 	FString StringFromBinaryArray(TArray<uint8> BinaryArray);
 
-	bool FormatIP4ToNumber(const FString& TheIP, uint8(&Out)[4]);
+	bool TextToIPArray(const FString& TheIP, uint8(&Out)[4]);
 	
 	
 };

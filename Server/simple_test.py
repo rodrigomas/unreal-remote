@@ -10,7 +10,7 @@ def main():
     
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_address = ('192.168.3.168', 10000)
+    server_address = ('127.0.0.1', 10000)
     
     print('connecting to %s port %s' % server_address)
     
@@ -19,7 +19,8 @@ def main():
     try:     
         
         while(True):       
-            strsss = input(">")
+            #strsss = input("data>")
+            strsss = raw_input("data>")
                     
             if(strsss == "exit"):
                 break
