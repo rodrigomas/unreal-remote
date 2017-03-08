@@ -12,6 +12,9 @@ ATCPListenerActor::ATCPListenerActor()
 {
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;	
+	Thread = NULL;
+	ListenerSocket = NULL;
+	ClientSocket = NULL;
 }
 
 bool ATCPListenerActor::Init()
@@ -51,7 +54,8 @@ void ATCPListenerActor::Stop()
 void ATCPListenerActor::EnsureCompletion()
 {
 	Stop();
-	Thread->WaitForCompletion();
+	if(Thread)
+		Thread->WaitForCompletion();
 }
 
 void ATCPListenerActor::Shutdown()
@@ -193,14 +197,18 @@ bool ATCPListenerActor::Disconnect()
 		{
 			
 			ListenerSocket->Stop();
+			ListenerSocket->Exit();
 			ClientSocket->Close();
+
+			//if (ListenerSocket)
+				//delete ListenerSocket;
 			//ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
 		}
 
-		Stop();
+		EnsureCompletion();
 
-		GetWorld()->GetTimerManager().ClearTimer(TCPTimerHandle);
-		GetWorld()->GetTimerManager().ClearTimer(TCPClientTimerHandle);
+		//GetWorld()->GetTimerManager().ClearTimer(TCPTimerHandle);
+		//GetWorld()->GetTimerManager().ClearTimer(TCPClientTimerHandle);
 	}
 	catch (...)
 	{
@@ -342,8 +350,30 @@ void ATCPListenerActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 			Disconnect();
 		}
 
-		Stop();
+		EnsureCompletion();
 		//Connect();
+	}
+	catch (...)
+	{
+
+	}
+}
+
+ATCPListenerActor::~ATCPListenerActor()
+{
+	try
+	{
+		Disconnect();
+
+		/*if (Thread)
+			delete Thread;
+
+		if (ListenerSocket)
+			delete ListenerSocket;*/
+
+		//ListenerSocket = NULL;
+
+		Thread = NULL;
 	}
 	catch (...)
 	{

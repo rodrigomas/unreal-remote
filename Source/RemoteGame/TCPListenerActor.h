@@ -20,6 +20,7 @@ public:
 	FTimerHandle TCPClientTimerHandle;
 
 	ATCPListenerActor();
+	virtual ~ATCPListenerActor();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Server Settings")
 	FString ServerIP = TEXT("127.0.0.1");
