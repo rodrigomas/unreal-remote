@@ -3,17 +3,69 @@
 #include "RemoteGame.h"
 #include "TCPListenerActor.h"
 #include "TimerManager.h"
+#include "Async.h"
+
+ATCPListenerActor* ATCPListenerActor::Runnable = NULL;
 
 // Sets default values
 ATCPListenerActor::ATCPListenerActor()
 {
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = true;	
+}
 
+bool ATCPListenerActor::Init()
+{
+
+	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Worker Thread Initialized"));
+	return true;
+}
+
+uint32 ATCPListenerActor::Run()
+{
+	FPlatformProcess::Sleep(0.03);
+
+	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Worker Thread Running"));
+
+	while (StopTaskCounter.GetValue() == 0)
+	{
+		ProcessData();
+
+		FPlatformProcess::Sleep(ThreadSleepTime);
+		//AsyncTask(ENamedThreads::GameThread, []() {
+			
+		//});
+		
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("TCP Client>> Worker Thread Finished"));
+
+	return 0;
+}
+
+void ATCPListenerActor::Stop()
+{
+	StopTaskCounter.Increment();
+}
+
+void ATCPListenerActor::EnsureCompletion()
+{
+	Stop();
+	Thread->WaitForCompletion();
+}
+
+void ATCPListenerActor::Shutdown()
+{
+	if (Runnable)
+	{
+		Runnable->EnsureCompletion();
+		delete Runnable;
+		Runnable = NULL;
+	}
 }
 
 bool ATCPListenerActor::Connect()
-{
+{	
 	uint8 IP4Nums[4];
 	if (!TextToIPArray(ServerIP, IP4Nums))
 	{
@@ -52,8 +104,17 @@ bool ATCPListenerActor::Connect()
 
 	ListenerSocket->Init();
 
-	GetWorldTimerManager().ClearTimer(TCPClientTimerHandle);
-	GetWorldTimerManager().SetTimer(TCPClientTimerHandle, this, &ATCPListenerActor::ProcessData, 0.01, true);
+	StopTaskCounter.Reset();
+
+	Thread = FRunnableThread::Create(this, TEXT("TCPListenerThread"), 0, TPri_BelowNormal); //windows default = 8mb for thread, could specify more
+
+	if (!Runnable && FPlatformProcess::SupportsMultithreading())
+	{
+		Runnable = this;
+	}
+
+	//GetWorldTimerManager().ClearTimer(TCPClientTimerHandle);
+	//GetWorldTimerManager().SetTimer(TCPClientTimerHandle, this, &ATCPListenerActor::ProcessData, 0.01, true);
 
 	return true;
 }
@@ -120,6 +181,7 @@ bool ATCPListenerActor::Disconnect()
 {
 	try
 	{
+
 		if (ConnectionSocket)
 		{
 			ConnectionSocket->Close();
@@ -134,6 +196,8 @@ bool ATCPListenerActor::Disconnect()
 			ClientSocket->Close();
 			//ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
 		}
+
+		Stop();
 
 		GetWorld()->GetTimerManager().ClearTimer(TCPTimerHandle);
 		GetWorld()->GetTimerManager().ClearTimer(TCPClientTimerHandle);
@@ -187,11 +251,7 @@ void ATCPListenerActor::ProcessData()
 	{
 		if (!ConnectionSocket) return;
 
-		UE_LOG(LogTemp, Warning, TEXT("TCP Client>> New Data From Client"));
-
 		TArray<uint8> ReceivedData;
-
-		
 
 		uint32 Size;
 		while (ConnectionSocket->HasPendingData(Size))
@@ -209,17 +269,19 @@ void ATCPListenerActor::ProcessData()
 			return;
 		}
 
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Data Bytes Read: %d"), ReceivedData.Num()));
+		UE_LOG(LogTemp, Warning, TEXT("TCP Client>> New Data From Client"));
+
+		//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Data Bytes Read: %d"), ReceivedData.Num()));
 
 		const FString ReceivedUE4String = StringFromBinaryArray(ReceivedData);
 
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("As String Data ~> %s"), *ReceivedUE4String));
+		//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("As String Data ~> %s"), *ReceivedUE4String));
 
 		UE_LOG(LogTemp, Warning, TEXT("As String Data ~> %s"), *ReceivedUE4String);
 	}
 	catch (...)
 	{
-
+		UE_LOG(LogTemp, Warning, TEXT("Error Proc"));
 	}
 }
 
@@ -254,6 +316,7 @@ void ATCPListenerActor::BeginPlay()
 	try
 	{
 		//Connect();
+
 	}
 	catch (...)
 	{
@@ -278,6 +341,8 @@ void ATCPListenerActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		{
 			Disconnect();
 		}
+
+		Stop();
 		//Connect();
 	}
 	catch (...)

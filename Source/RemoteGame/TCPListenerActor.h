@@ -10,7 +10,7 @@
 #include "TCPListenerActor.generated.h"
 
 UCLASS(Blueprintable)
-class REMOTEGAME_API ATCPListenerActor : public AActor
+class REMOTEGAME_API ATCPListenerActor : public AActor, public FRunnable
 {
 	GENERATED_BODY()
 	
@@ -29,6 +29,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Server Settings")
 	int32 ReceiveBufferSize = 2048;
+
+	UPROPERTY(EditAnywhere, Category = "Server Settings")
+	float ThreadSleepTime = 0.03f;
 	
 	UFUNCTION(BlueprintCallable, Category = "Connection")
 	bool Connect();
@@ -51,14 +54,31 @@ protected:
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	virtual bool Init();
+
+	virtual uint32 Run();
+
+	virtual void Stop();
+
+	void EnsureCompletion();
+
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+
+	static void Shutdown();
 
 private:
 	FSocket* ClientSocket;
 	FTcpListener* ListenerSocket;
 	FSocket* ConnectionSocket;		
+
+	// Singleton
+	static  ATCPListenerActor* Runnable;	
+
+	FRunnableThread* Thread;
+
+	FThreadSafeCounter StopTaskCounter;
 
 	FIPv4Endpoint RemoteAddressForConnection;
 
